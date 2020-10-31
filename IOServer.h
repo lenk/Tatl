@@ -14,26 +14,27 @@
 
 class IOServer {
 
-private:
+protected:
+    int remote, sock;
     bool json;
 
 public:
+    enum Level { ERROR, VERBOSE, DEBUG, INFO };
+
     IOServer(int port, bool json);
 
-    enum Level { ERROR, VERBOSE, DEBUG, INFO };
+    sys_ppu_thread_t init(bool await);
 
     long print(const char *message, Level level);
 
     long print(const char *message);
 
-    sys_ppu_thread_t init(bool await);
-
-    int remote;
-    int sock;
 private:
+    void append(std::stringstream * builder, IOServer::Level level);
+
     int createSocket(int port);
 
-    static void start(void * arg);
+     static void start(void * arg);
 };
 
 #endif //IOSERVER_IOServer_H
