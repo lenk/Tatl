@@ -31,24 +31,28 @@ int IOServer::createSocket(int port) {
     return connection;
 }
 
-void IOServer::init(bool await) {
-    std::thread t(&IOServer::start, this);
+sys_ppu_thread_t IOServer::init(bool await) {
+    sys_ppu_thread_t t;
+
+    sysThreadCreate(&t, IOServer::start, this, 0, 0x2000, 1, "IOServer");
 
     if(await) {
-        t.join();
+        sysThreadJoin(t, 0);
     }
+
+    return t;
 }
 
-void IOServer::start() {
+static void start(IOServer * server) {
     struct sockaddr_in name;
     socklen_t len = sizeof(name);
 
-    if(listen(this->sock, 5) < 0) {
+    if (listen(server->sock, 5) < 0) {
         std::cout << "error listening for connection" << std::endl;
         exit(EXIT_FAILURE);
     }
 
-    if((this->remote = accept(this->sock, (struct sockaddr *) &name, &len)) < 0) {
+    if ((server->remote = accept(server->sock, (struct sockaddr *) &name, &len)) < 0) {
         std::cout << "error accepting connection" << std::endl;
         exit(EXIT_FAILURE);
     }

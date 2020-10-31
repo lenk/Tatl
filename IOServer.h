@@ -9,14 +9,13 @@
 #include <netinet/in.h>
 #include <pthread.h>
 #include <iostream>
-#include <thread>
+#include <sys/thread.h>
+#include <ppu-types.h>
 
 class IOServer {
 
 private:
-    int remote;
     bool json;
-    int sock;
 
 public:
     IOServer(int port, bool json);
@@ -27,12 +26,14 @@ public:
 
     long print(const char *message);
 
-    void init(bool await);
+    sys_ppu_thread_t init(bool await);
 
+    int remote;
+    int sock;
 private:
     int createSocket(int port);
 
-    void start();
+    static void start(void * arg);
 };
 
 #endif //IOSERVER_IOServer_H
