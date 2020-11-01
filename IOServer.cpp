@@ -1,144 +1,139 @@
-//
-// Created by air on 10/30/20.
-//
-#include "IOServer.h"
+#include <iostream>
+
+#include "sys/socket.h"
+#include <netinet/in.h>
+#include <arpa/inet.h>
+#include <string>
 #include <cstring>
 #include <sstream>
 
-IOServer::IOServer(int port, bool json) {
-    this->sock = createSocket(port);
-    this->json = json;
-}
+class IOServer {
+private:
+    struct sockaddr_in addr;
+    int _connection;
+    int _socket;
+    bool _json;
 
-/**
- * create socket connection with selected port to listen for incoming connection
- *
- * @param port port to listen on
- * @return socket ptr
- */
-int IOServer::createSocket(int port) {
-    int connection = socket(PF_INET, SOCK_STREAM, 0);
-    struct sockaddr_in name;
+public:
+    enum Level { ERROR, VERBOSE, DEBUG, INFO };
 
-    if(connection < 0) {
-        std::cout << "error creating socket" << std::endl;
-        exit(EXIT_FAILURE);
+    IOServer(int port, bool json) {
+        this->_json = json;
+        this->initSocket(port);
     }
 
-    name.sin_addr.s_addr = htonl(INADDR_ANY);
-    name.sin_port = htons (port);
-    name.sin_family = AF_INET;
+    /**
+     * create socket connection with selected port to listen for incoming connection
+     *
+     * @param port port to listen on
+     * @return socket ptr
+     */
+private:
+    void initSocket(int port) {
+        if ((_connection = sysNetSocket(AF_INET, SOCK_STREAM, 0)) == 0) {
+            throw std::runtime_error("failure creating socket stream!");
+        }
 
-    if(bind(connection, (struct sockaddr *) &name, sizeof(name)) < 0) {
-        std::cout << "error binding socket" << std::endl;
-        exit(EXIT_FAILURE);
+        addr.sin_addr.s_addr = htonl(INADDR_ANY);
+        addr.sin_port = htons(port);
+        addr.sin_family = AF_INET;
+
+        if (sysNetBind(_connection, (struct sockaddr *) &addr, sizeof(addr)) < 0) {
+            throw std::runtime_error("failure binding connection!");
+        }
+
+        if (sysNetListen(_connection, 3) < 0) {
+            throw std::runtime_error("failure listening connection!");
+        }
     }
 
-    return connection;
-}
-
-/**
- * call to initialize server and accept any incoming connection
- * set 'await' as true to block your thread till connection is accepted
- *
- * @param await wait for accepted connection
- * @return running thread
- */
-sys_ppu_thread_t IOServer::init(bool await) {
-    sys_ppu_thread_t t;
-
-    sysThreadCreate(&t, start, this, 0, 0x2000, 1, "IOServer");
-
-    if(await) {
-        sysThreadJoin(t, 0);
+    /**
+     * call to initialize server and accept any incoming connection
+     * set 'await' as true to block your thread till connection is accepted
+     *
+     * @param await wait for accepted connection
+     * @return running thread
+     */
+public:
+    void init(bool await) {
+        start();
     }
 
-    return t;
-}
+    /**
+     * accept first incoming connection and store remote socket connection
+     * to communicate all prints through
+     *
+     * @param ptr IOServer pointer
+     */
+    void start() {
+        int len = sizeof(addr);
 
-/**
- * accept first incoming connection and store remote socket connection
- * to communicate all prints through
- *
- * @param ptr IOServer pointer
- */
-void IOServer::start(void * ptr) {
-    IOServer * server = static_cast<IOServer *>(ptr);
-
-    if (listen(server->sock, 5) < 0) {
-        std::cout << "error listening for connection" << std::endl;
-        exit(EXIT_FAILURE);
+        if ((_socket = sysNetAccept(_connection, (struct sockaddr *) &addr, (socklen_t * ) &len)) < 0) {
+            throw std::runtime_error("failure accepting connection!");
+        }
     }
 
-    struct sockaddr_in remoteAddress;
-    if ((server->remote = accept(server->sock, (struct sockaddr *) &remoteAddress,
-                                 reinterpret_cast<socklen_t *>(sizeof(remoteAddress)))) < 0) {
-
-        std::cout << "error accepting connection" << std::endl;
-        exit(EXIT_FAILURE);
-    }
-}
-
-/**
- * print raw data/message to remote client
- *
- * @param message data to send
- * @return send socket response
- */
-long IOServer::print(const char *message) {
-    return send(this->remote, message, strlen(message), 0);
-}
-
-/**
- * print message with message type, if JSON is toggled
- * message is sent as a JSON built message, otherwise
- * it's sent in the following format
- * (LEVEL): (MESSAGE)
- *
- * @param message message to send
- * @param level selected message level
- * @return send socket response
- */
-long IOServer::print(const char *message, Level level) {
-    std::stringstream builder;
-
-    if(this->json) {
-        builder << "{\"type\":\"";
-        append(&builder, level);
-        builder << "\", \"message\":\"" << message << "\"}";
-    } else {
-        append(&builder, level);
-        builder << ": " << message;
+    /**
+     * print raw data/message to remote client
+     *
+     * @param message data to send
+     * @return send socket response
+     */
+    void print(const char *message) {
+        sysNetSendto(this->_socket, message, strlen(message), 13, (struct sockaddr *) &addr, sizeof(addr));
     }
 
-    const std::string tmp = builder.str();
-    const char* result = tmp.c_str();
+    /**
+     * print message with message type, if JSON is toggled
+     * message is sent as a JSON built message, otherwise
+     * it's sent in the following format
+     * (LEVEL): (MESSAGE)
+     *
+     * @param message message to send
+     * @param level selected message level
+     * @return send socket response
+     */
+    void print(const char *message, Level level) {
+        std::stringstream builder;
 
-    return send(this->remote, result, strlen(result), 0);
-}
+        if (this->_json) {
+            builder << "{\"type\":\"";
+            append(&builder, level);
+            builder << "\", \"message\":\"" << message << "\"}\n\n";
+        } else {
+            append(&builder, level);
+            builder << ": " << message;
+        }
 
-/**
- * append selected enum level to StringStream as a readable string
- *
- * @param builder stream
- * @param level selected level
- */
-void IOServer::append(std::stringstream * builder, IOServer::Level level) {
-    switch (level) {
-        case IOServer::Level::DEBUG:
-            builder->operator<<("DEBUG");
-            break;
+        const std::string tmp = (builder.str());
+        const char *result = tmp.c_str();
 
-        case IOServer::Level::VERBOSE:
-            builder->operator<<("VERBOSE");
-            break;
-
-        case IOServer::Level::ERROR:
-            builder->operator<<("ERROR");
-            break;
-
-        case IOServer::Level::INFO:
-            builder->operator<<("INFO");
-            break;
+        print(result);
     }
-}
+
+    /**
+     * append selected enum level to StringStream as a readable string
+     *
+     * @param builder stream
+     * @param level selected level
+     */
+    void append(std::stringstream *builder, Level level) {
+        switch (level) {
+            case Level::DEBUG:
+                builder->operator<<("DEBUG");
+                break;
+
+            case Level::VERBOSE:
+                builder->operator<<("VERBOSE");
+                break;
+
+            case Level::ERROR:
+                builder->operator<<("ERROR");
+                break;
+
+            case Level::INFO:
+                builder->operator<<("INFO");
+                break;
+        }
+    }
+};
